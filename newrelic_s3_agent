@@ -10,28 +10,64 @@ module S3Agent
 
   class Agent < NewRelic::Plugin::Agent::Base
 
-    agent_guid "io.adstage.newrelic-s3-plugin"
-    agent_version "1.0.1"
-    agent_config_options :region, :bucket_name, :access_key_id, :secret_access_key
+    agent_guid "com.hightail.newrelic-s3-plugin"
+    agent_version "1.0.0"
+    agent_config_options :region, :bucket_name, :storage_type, :access_key_id, :secret_access_key
     agent_human_labels("S3") { bucket_name }
 
     def poll_cycle
-      count = 0
-      size = 0
-      last_modified = Time.new(0)
-      s3 = Aws::S3::Client.new(
+      period = 60 * 60 * 24
+      cloudwatch_delay = 60
+      time_offset = cloudwatch_delay
+      start_time = (Time.now.utc - (time_offset + period))
+      end_time = (Time.now.utc - time_offset)
+
+      cw = Aws::CloudWatch::Client.new(
         credentials: Aws::Credentials.new(access_key_id, secret_access_key),
         region: region)
-      s3.list_objects(bucket: bucket_name).each do |page|
-        page.contents.each do |object|
-          count += 1
-          size += object.size.to_i
-          last_modified = [last_modified, object.last_modified].max
-        end
-      end
-      report_metric "ObjectCount", "Objects", count
-      report_metric "Size", "Bytes", size
-      report_metric "SinceLastModified", "Seconds", (Time.now - last_modified).to_i
+
+      size = cw.get_metric_statistics({
+        namespace: "AWS/S3",
+        metric_name: "BucketSizeBytes",
+        dimensions: [
+          {
+            name: "BucketName",
+            value: bucket_name,
+          },
+          {
+            name: "StorageType",
+            value: storage_type
+          }
+        ],
+        start_time: start_time.iso8601,
+        end_time: end_time.iso8601,
+        period: period,
+        statistics: ["Average"],
+        unit: "Bytes"
+      })
+
+      count = cw.get_metric_statistics({
+        namespace: "AWS/S3",
+        metric_name: "NumberOfObjects",
+        dimensions: [
+          {
+            name: "BucketName",
+            value: bucket_name,
+          },
+          {
+            name: "StorageType",
+            value: "AllStorageTypes"
+          }
+        ],
+        start_time: start_time.iso8601,
+        end_time: end_time.iso8601,
+        period: period,
+        statistics: ["Average"],
+        unit: "Count"
+      })
+
+      report_metric "ObjectCount", "Objects", count.datapoints[0].average
+      report_metric "Size", "Bytes", size.datapoints[0].average
     end
 
   end

@@ -32,4 +32,5 @@ agents:
   s3:
     - bucket_name: my_bucket
       region: us-east-1
+      storage_type: StandardStorage
       <<: *s3_creds
